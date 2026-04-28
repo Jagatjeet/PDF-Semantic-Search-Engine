@@ -1,0 +1,13 @@
+Goal:
+I want to create a PDF semantic search engine. 
+
+Context:
+I want to create a vector database using PDFs uploaded through a UI interface. I want to use Qdrant as the Vector Database. Use an embedding model which is best for PDFs eg Nomic.
+
+For the semantic extraction, I want to use an Open Source LLM - say Mistral 7B or Mixtral models
+
+Action:
+Create a UI interface or searching the PDFs
+Create a separate UI interface for uploading PDFs
+
+I want to deploy the whole application to Azure

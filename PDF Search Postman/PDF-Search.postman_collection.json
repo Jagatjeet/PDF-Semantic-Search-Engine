@@ -1,0 +1,610 @@
+{
+  "info": {
+    "name": "PDF Search",
+    "_postman_id": "pdf-search-collection-v1",
+    "description": "Full API coverage for the PDF Search stack.\n\nLocal: Frontend proxy (port 3000), Backend FastAPI (port 8000), Ollama (port 11434).\n\nAzure (ACA): Update frontend_url to https://<frontend-fqdn>/api, backend_url to https://<backend-fqdn>, and ollama_url to https://<ollama-fqdn>. Note: ACA internal services communicate on port 80 regardless of the container's native port.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "frontend_url", "value": "http://localhost:3000/api", "type": "string", "description": "For ACA: https://<frontend-fqdn>/api" },
+    { "key": "backend_url",  "value": "http://localhost:8000",     "type": "string", "description": "For ACA: https://<backend-fqdn>" },
+    { "key": "ollama_url",   "value": "http://localhost:11434",    "type": "string", "description": "For ACA: https://<ollama-fqdn>" },
+    { "key": "sample_filename", "value": "", "type": "string", "description": "Set automatically by 'List documents' test script" }
+  ],
+  "item": [
+    {
+      "name": "Frontend (nginx proxy → backend)",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "method": "GET",
+            "url": "{{frontend_url}}/health",
+            "description": "Verifies the backend is reachable through the nginx proxy."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Status is ok', function () {",
+                  "  const responseBodyJson = pm.response.json();",
+                  "  pm.expect(responseBodyJson).to.have.property('status', 'ok');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List documents",
+          "request": {
+            "method": "GET",
+            "url": "{{frontend_url}}/documents",
+            "description": "Returns all indexed PDF filenames."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Response has documents array', function () {",
+                  "  const responseBodyJson = pm.response.json();",
+                  "  pm.expect(responseBodyJson).to.have.property('documents');",
+                  "  pm.expect(responseBodyJson.documents).to.be.an('array');",
+                  "  // Save first document name for use in search requests",
+                  "  if (responseBodyJson.documents.length > 0) {",
+                  "    pm.collectionVariables.set('sample_filename', responseBodyJson.documents[0]);",
+                  "  }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload PDF",
+          "request": {
+            "method": "POST",
+            "url": "{{frontend_url}}/upload",
+            "description": "Upload one or more PDF files to be parsed, embedded and indexed in Qdrant.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "files",
+                  "type": "file",
+                  "src": [],
+                  "description": "Select one or more PDF files to upload."
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Response has results array', function () {",
+                  "  const responseBodyJson = pm.response.json();",
+                  "  pm.expect(responseBodyJson).to.have.property('results');",
+                  "  pm.expect(responseBodyJson.results).to.be.an('array').that.is.not.empty;",
+                  "});",
+                  "pm.test('Each result has expected fields', function () {",
+                  "  const responseBodyJson = pm.response.json();",
+                  "  responseBodyJson.results.forEach(function (r) {",
+                  "    pm.expect(r).to.have.all.keys('filename', 'chunks', 'status');",
+                  "    pm.expect(r.status).to.be.oneOf(['indexed', 'empty']);",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search (no streaming)",
+          "request": {
+            "method": "POST",
+            "url": "{{frontend_url}}/search",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"What are the main topics covered?\",\n  \"top_k\": 1,\n  \"filename_filter\": null,\n  \"generate_answer\": true\n}"
+            },
+            "description": "Semantic search returning matched chunks and a generated answer."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Response has answer and chunks', function () {",
+                  "  const responseBodyJson = pm.response.json();",
+                  "  pm.expect(responseBodyJson).to.have.property('chunks');",
+                  "  pm.expect(responseBodyJson.chunks).to.be.an('array');",
+                  "  pm.expect(responseBodyJson).to.have.property('answer');",
+                  "});",
+                  "pm.test('Chunks have expected fields', function () {",
+                  "  const responseBodyJson = pm.response.json();",
+                  "  if (responseBodyJson.chunks.length > 0) {",
+                  "    const chunk = responseBodyJson.chunks[0];",
+                  "    pm.expect(chunk).to.have.all.keys('score', 'filename', 'page', 'chunk_index', 'text');",
+                  "    pm.expect(chunk.score).to.be.a('number');",
+                  "  }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search (filtered by filename)",
+          "request": {
+            "method": "POST",
+            "url": "{{frontend_url}}/search",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"What are the main topics covered?\",\n  \"top_k\": 1,\n  \"filename_filter\": \"{{sample_filename}}\",\n  \"generate_answer\": false\n}"
+            },
+            "description": "Semantic search scoped to a single PDF. Populate `sample_filename` by running 'List documents' first."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('All chunks match the filename filter', function () {",
+                  "  const responseBodyJson = pm.response.json();",
+                  "  const filter = pm.collectionVariables.get('sample_filename');",
+                  "  responseBodyJson.chunks.forEach(function (c) {",
+                  "    pm.expect(c.filename).to.equal(filter);",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search stream (SSE)",
+          "request": {
+            "method": "POST",
+            "url": "{{frontend_url}}/search/stream",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"Summarise the key findings\",\n  \"top_k\": 1,\n  \"filename_filter\": null,\n  \"generate_answer\": true\n}"
+            },
+            "description": "Streaming SSE endpoint. Each event is a JSON line prefixed with 'data: '. Types: chunks | token | done. Note: Postman displays the raw SSE stream in the response body."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Content-Type is text/event-stream', function () {",
+                  "  pm.expect(pm.response.headers.get('Content-Type')).to.include('text/event-stream');",
+                  "});",
+                  "pm.test('Response body contains SSE events', function () {",
+                  "  const body = pm.response.text();",
+                  "  pm.expect(body).to.include('data: ');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Backend (FastAPI direct)",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "method": "GET",
+            "url": "{{backend_url}}/health",
+            "description": "Direct backend health check, bypassing nginx."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Status is ok', function () {",
+                  "  const responseBodyJson = pm.response.json();",
+                  "  pm.expect(responseBodyJson.status).to.equal('ok');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "OpenAPI docs (Swagger UI)",
+          "request": {
+            "method": "GET",
+            "url": "{{backend_url}}/docs",
+            "description": "Opens the FastAPI auto-generated Swagger UI."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List documents",
+          "request": {
+            "method": "GET",
+            "url": "{{backend_url}}/documents"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('documents is an array', function () {",
+                  "  const responseBodyJson = pm.response.json();",
+                  "  pm.expect(responseBodyJson.documents).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search",
+          "request": {
+            "method": "POST",
+            "url": "{{backend_url}}/search",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"What are the main topics covered?\",\n  \"top_k\": 1,\n  \"filename_filter\": null,\n  \"generate_answer\": true\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Response structure is valid', function () {",
+                  "  const responseBodyJson = pm.response.json();",
+                  "  pm.expect(responseBodyJson).to.have.property('answer');",
+                  "  pm.expect(responseBodyJson).to.have.property('chunks');",
+                  "  pm.expect(responseBodyJson.chunks).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search - empty query validation",
+          "request": {
+            "method": "POST",
+            "url": "{{backend_url}}/search",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"   \",\n  \"top_k\": 1,\n  \"generate_answer\": false\n}"
+            },
+            "description": "Expects a 400 error for a blank query."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 400', function () {",
+                  "  pm.response.to.have.status(400);",
+                  "});",
+                  "pm.test('Error detail is returned', function () {",
+                  "  const responseBodyJson = pm.response.json();",
+                  "  pm.expect(responseBodyJson).to.have.property('detail');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search stream (SSE)",
+          "request": {
+            "method": "POST",
+            "url": "{{backend_url}}/search/stream",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"Summarise the key findings\",\n  \"top_k\": 1,\n  \"filename_filter\": null,\n  \"generate_answer\": true\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Response contains SSE data lines', function () {",
+                  "  pm.expect(pm.response.text()).to.include('data: ');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload PDF",
+          "request": {
+            "method": "POST",
+            "url": "{{backend_url}}/upload",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "files",
+                  "type": "file",
+                  "src": [],
+                  "description": "Select one or more PDF files."
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Results array is present', function () {",
+                  "  const responseBodyJson = pm.response.json();",
+                  "  pm.expect(responseBodyJson.results).to.be.an('array').that.is.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Ollama (direct)",
+      "item": [
+        {
+          "name": "Server liveness",
+          "request": {
+            "method": "HEAD",
+            "url": "{{ollama_url}}/",
+            "description": "Quick ping to verify the Ollama server is up."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Server is reachable (200)', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List models",
+          "request": {
+            "method": "GET",
+            "url": "{{ollama_url}}/api/tags",
+            "description": "Returns all locally available models. Used by wait_for_model() in the backend."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Models array is present', function () {",
+                  "  const responseBodyJson = pm.response.json();",
+                  "  pm.expect(responseBodyJson).to.have.property('models');",
+                  "  pm.expect(responseBodyJson.models).to.be.an('array');",
+                  "});",
+                  "pm.test('Mistral model is available', function () {",
+                  "  const responseBodyJson = pm.response.json();",
+                  "  const names = responseBodyJson.models.map(function (m) { return m.name; });",
+                  "  pm.expect(names.some(function (n) { return n.includes('mistral'); })).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Chat (non-streaming)",
+          "request": {
+            "method": "POST",
+            "url": "{{ollama_url}}/api/chat",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"mistral\",\n  \"messages\": [\n    { \"role\": \"system\", \"content\": \"You are a helpful assistant.\" },\n    { \"role\": \"user\",   \"content\": \"Reply with exactly two words: hello world\" }\n  ],\n  \"stream\": false,\n  \"options\": { \"num_predict\": 10, \"temperature\": 0 }\n}"
+            },
+            "description": "Direct chat completion call to Ollama. Same endpoint and schema used by the backend's generate_answer()."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Response has message content', function () {",
+                  "  const responseBodyJson = pm.response.json();",
+                  "  pm.expect(responseBodyJson).to.have.property('message');",
+                  "  pm.expect(responseBodyJson.message).to.have.property('content');",
+                  "  pm.expect(responseBodyJson.message.content).to.be.a('string').and.not.empty;",
+                  "});",
+                  "pm.test('Done flag is true', function () {",
+                  "  const responseBodyJson = pm.response.json();",
+                  "  pm.expect(responseBodyJson.done).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Chat (streaming)",
+          "request": {
+            "method": "POST",
+            "url": "{{ollama_url}}/api/chat",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"mistral\",\n  \"messages\": [\n    { \"role\": \"user\", \"content\": \"Count to three.\" }\n  ],\n  \"stream\": true,\n  \"options\": { \"num_predict\": 20, \"temperature\": 0 }\n}"
+            },
+            "description": "Streaming chat call. Ollama returns one JSON object per line; each has a message.content token. Same schema used by the backend's stream_answer()."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Response body contains streamed JSON lines', function () {",
+                  "  const lines = pm.response.text().trim().split('\\n').filter(Boolean);",
+                  "  pm.expect(lines.length).to.be.greaterThan(0);",
+                  "  const first = JSON.parse(lines[0]);",
+                  "  pm.expect(first).to.have.property('message');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Generate (raw completion)",
+          "request": {
+            "method": "POST",
+            "url": "{{ollama_url}}/api/generate",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"mistral\",\n  \"prompt\": \"What is 2 + 2?\",\n  \"stream\": false,\n  \"options\": { \"num_predict\": 20, \"temperature\": 0 }\n}"
+            },
+            "description": "Raw text completion (not chat format). Useful for comparing quality vs /api/chat — the backend was switched away from this endpoint because /api/chat produces better output for Mistral."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Response field is a non-empty string', function () {",
+                  "  const responseBodyJson = pm.response.json();",
+                  "  pm.expect(responseBodyJson.response).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Show model info",
+          "request": {
+            "method": "POST",
+            "url": "{{ollama_url}}/api/show",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"mistral\"\n}"
+            },
+            "description": "Returns model metadata: parameter count, quantization, context length, etc."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Model info contains details', function () {",
+                  "  const responseBodyJson = pm.response.json();",
+                  "  pm.expect(responseBodyJson).to.have.property('details');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
