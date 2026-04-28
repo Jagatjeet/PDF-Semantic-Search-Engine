@@ -1,5 +1,7 @@
 # PDF Semantic Search Engine
 
+> **This application was built entirely with vibe coding using [GitHub Copilot](https://github.com/features/copilot) powered by Claude Sonnet 4.6 — from initial scaffolding to Azure deployment, every file was generated through AI-assisted development.**
+
 A full-stack application for semantic search over PDF documents, powered by:
 
 - **Qdrant** — vector database
